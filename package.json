@@ -1,11 +1,11 @@
 {
   "name": "schema-safe-kafkajs",
-  "version": "0.0.5",
+  "version": "0.0.7",
   "description": "Package for safe publishing messages into kafka topic with schema validation",
   "main": "./dist/index.js",
-  "homepage": "https://www.google.com",
+  "homepage": "https://github.com/IzquierdoP/schema-safe-kafkajs",
   "repository": {
-    "url": "https://github.com"
+    "url": "https://github.com/IzquierdoP/schema-safe-kafkajs"
   },
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
