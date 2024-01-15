@@ -2,6 +2,7 @@ import {Consumer, ConsumerConfig, Kafka, Message, Producer, ProducerConfig, Reco
 import {SchemaRegistry} from "@kafkajs/confluent-schema-registry";
 import {KafkaClientProps, PublishProps} from "./types";
 import {AvroSchema, Schema} from "@kafkajs/confluent-schema-registry/dist/@types";
+import {getAvroMessageBuffer, getSchemaIdFromAvroMessage} from "./functions";
 
 /**
  * Kafka client. This class is a wrapper around the kafkajs library and the kafkajs confluent schema registry library.
@@ -26,7 +27,7 @@ export class KafkaClient {
 	 * @param {Producer} producer - The producer instance, must be connected and ready to publish
 	 * @param {PublishProps} publishData - The publish configuration, this includes the messages to publish and other publish options
 	 */
-	async publish(producer: Producer, publishData: PublishProps) : Promise<RecordMetadata[]> {
+	async publish(producer: Producer, publishData: PublishProps): Promise<RecordMetadata[]> {
 		const messages: Message[] = []
 
 		for (const message of publishData.messages) {
@@ -73,6 +74,7 @@ export class KafkaClient {
 	async getSchema(schemaId: number): Promise<AvroSchema> {
 		return await this.schemaRegistry.getSchema(schemaId) as AvroSchema
 	}
+
 	/**
 	 * Get the latest registered schema for a specific topic
 	 * @param {string} topic - the topic name
@@ -82,9 +84,13 @@ export class KafkaClient {
 		return await this.schemaRegistry.getSchema(schemaId) as AvroSchema
 	}
 
-
-
-
-
+	/**
+	 * Decodes an avro encoded message, the schemaId is derived from the message itself.
+	 * @param message
+	 */
+	async decodeMessage(message: Message): Promise<any> {
+		const decoded = await this.schemaRegistry.decode(getAvroMessageBuffer(message))
+		return decoded
+	}
 
 }
