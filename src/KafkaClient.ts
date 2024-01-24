@@ -1,6 +1,6 @@
-import {Consumer, ConsumerConfig, Kafka, Message, Producer, ProducerConfig, RecordMetadata} from "kafkajs";
+import {Consumer, ConsumerConfig, Kafka, Message, ProducerConfig, RecordMetadata} from "kafkajs";
 import {SchemaRegistry} from "@kafkajs/confluent-schema-registry";
-import {KafkaClientProps, PublishProps} from "./types";
+import {KafkaClientProps, MessageWithSchema, PublishProps, Producer} from "./types";
 import {AvroSchema, Schema} from "@kafkajs/confluent-schema-registry/dist/@types";
 import {getAvroMessageBuffer, getSchemaIdFromAvroMessage} from "./functions";
 
@@ -28,27 +28,46 @@ export class KafkaClient {
 	 * @param {PublishProps} publishData - The publish configuration, this includes the messages to publish and other publish options
 	 */
 	async publish(producer: Producer, publishData: PublishProps): Promise<RecordMetadata[]> {
-		const messages: Message[] = []
 
-		for (const message of publishData.messages) {
-			const encodedMessage = await this.schemaRegistry.encode(message.schemaId, message.value)
-			messages.push({
-				key: message.key ? Buffer.from(message.key) : undefined,
-				value: encodedMessage,
-				headers: message.headers,
-				timestamp: message.timestamp,
-				partition: message.partition,
-			})
-		}
+		const encodedMessages = await this._encodeBatch(publishData.messages)
 
 		return await producer.send({
-			messages: messages,
+			messages: encodedMessages,
 			acks: publishData.acks,
 			topic: publishData.topic,
 			timeout: publishData.timeout,
 			compression: publishData.compression
 		})
 
+	}
+
+	/**
+	 * Encodes a batch of messages using the schema registry.
+	 * @param {MessageWithSchema[]} messages - the messages array to encode, each message hast the schemaId that'll be used.
+	 * @private
+	 */
+	private async _encodeBatch(messages: MessageWithSchema[]): Promise<Message[]> {
+		const encodePromises = []
+
+		for (const message of messages) {
+			const encodedMessagePromise = this.schemaRegistry.encode(message.schemaId, message.value)
+			encodePromises.push(encodedMessagePromise)
+		}
+
+		const encodedMessages = await Promise.all(encodePromises)
+
+		const producerMessages: Message[] = encodedMessages.map((encodedMessage, index) => {
+
+			return {
+				value: encodedMessage,
+				headers: messages[index].headers,
+				timestamp: messages[index].timestamp,
+				key: messages[index].key,
+				partition: messages[index].partition
+			}
+		})
+
+		return producerMessages
 	}
 
 	/**
@@ -76,12 +95,20 @@ export class KafkaClient {
 	}
 
 	/**
-	 * Get the latest registered schema for a specific topic
-	 * @param {string} topic - the topic name
+	 * Get the latest registered schema for a specific subject
+	 * @param {string} subject - the topsubjectic name
 	 */
-	async getLatestSchema(topic: string): Promise<AvroSchema> {
-		const schemaId = await this.schemaRegistry.getLatestSchemaId(topic)
+	async getLatestSchema(subject: string): Promise<AvroSchema> {
+		const schemaId = await this.schemaRegistry.getLatestSchemaId(subject)
 		return await this.schemaRegistry.getSchema(schemaId) as AvroSchema
+	}
+
+	/**
+	 * Get the latest registered schema id for a specific subject
+	 * @param subject
+	 */
+	async getLatestSchemaId(subject: string) {
+		return await this.schemaRegistry.getLatestSchemaId(subject)
 	}
 
 	/**
