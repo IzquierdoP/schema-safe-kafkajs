@@ -53,8 +53,6 @@ export class KafkaClient {
 
     for (const message of messages) {
       try {
-
-
         const encodedMessagePromise = this._encode(message)
         encodePromises.push(encodedMessagePromise)
       } catch (e) {
