@@ -57,3 +57,12 @@ async function run() {
 run().catch(console.error)
 
 ```
+
+
+## Deploying new Version
+
+```bash
+npm version patch
+git push
+gh release create
+```
