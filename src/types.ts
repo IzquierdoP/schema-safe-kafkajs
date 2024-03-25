@@ -25,7 +25,7 @@ export interface KafkaClientProps {
 export interface MessageWithSchema {
   key?: Buffer | string | null
   schemaId: number,
-  value: object,
+  value: object | null,
   headers?: IHeaders,
   timestamp?: string
   partition?: number
