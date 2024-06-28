@@ -1,8 +1,15 @@
 import {Consumer, ConsumerConfig, Kafka, Message, ProducerConfig, RecordMetadata} from "kafkajs";
 import {SchemaRegistry} from "@kafkajs/confluent-schema-registry";
-import {KafkaClientProps, MessageWithSchema, PublishProps, Producer, SchemaSafeError} from "./types";
+import {
+  KafkaClientProps,
+  MessageWithSchema,
+  PublishProps,
+  Producer,
+  SchemaSafeError,
+  RecordFailedToEncode
+} from "./types";
 import {AvroSchema, Schema} from "@kafkajs/confluent-schema-registry/dist/@types";
-import {getAvroMessageBuffer, getSchemaIdFromAvroMessage} from "./functions";
+import {getAvroMessageBuffer} from "./functions";
 import {ConfluentSchemaRegistryValidationError} from "@kafkajs/confluent-schema-registry/dist/errors";
 
 /**
@@ -28,11 +35,14 @@ export class KafkaClient {
    * @param {Producer} producer - The producer instance, must be connected and ready to publish
    * @param {PublishProps} publishData - The publish configuration, this includes the messages to publish and other publish options
    */
-  async publish(producer: Producer, publishData: PublishProps): Promise<RecordMetadata[]> {
+  async publish(producer: Producer, publishData: PublishProps): Promise<{
+    publishBatchMetadata: RecordMetadata[],
+    errorMessages?: RecordFailedToEncode[]
+  }> {
 
-    const encodedMessages = await this._encodeBatch(publishData.messages)
+    const {encodedMessages, errorMessages} = await this._encodeBatch(publishData.messages)
 
-    return await producer.send({
+    const publishBatchMetadata = await producer.send({
       messages: encodedMessages,
       acks: publishData.acks,
       topic: publishData.topic,
@@ -40,6 +50,10 @@ export class KafkaClient {
       compression: publishData.compression
     })
 
+    return {
+      publishBatchMetadata,
+      errorMessages
+    }
   }
 
   /**
@@ -47,23 +61,29 @@ export class KafkaClient {
    * @param {MessageWithSchema[]} messages - the messages array to encode, each message hast the schemaId that'll be used.
    * @private
    */
-  private async _encodeBatch(messages: MessageWithSchema[]): Promise<Message[]> {
+  private async _encodeBatch(messages: MessageWithSchema[]): Promise<{
+    encodedMessages: Message[],
+    errorMessages?: RecordFailedToEncode[]
+  }> {
 
-    const encodePromises = []
+    const encodedValues = []
+    const errorMessages: RecordFailedToEncode[] = []
 
     for (const message of messages) {
       try {
-        const encodedMessagePromise = this._encode(message)
-        encodePromises.push(encodedMessagePromise)
-      } catch (e) {
-
+        const encodedMessage = await this._encode(message)
+        encodedValues.push(encodedMessage)
+      } catch (e: any) {
+        errorMessages.push({
+          schemaId: message.schemaId,
+          key: Buffer.isBuffer(message.key) ? message.key.toString() : message.key ?? null,
+          paths: e instanceof SchemaSafeError ? e.paths : [],
+          error: e.message
+        })
       }
     }
 
-    const encodedMessages = await Promise.all(encodePromises)
-
-    const producerMessages: Message[] = encodedMessages.map((encodedMessage, index) => {
-
+    const encodedMessages: Message[] = encodedValues.map((encodedMessage, index) => {
       return {
         value: encodedMessage,
         headers: messages[index].headers,
@@ -73,13 +93,29 @@ export class KafkaClient {
       }
     })
 
-    return producerMessages
+    return {
+      encodedMessages: encodedMessages,
+      errorMessages: errorMessages.length > 0 ? errorMessages : undefined
+    }
   }
 
 
-  private async _encode(message: MessageWithSchema): Promise<Buffer> {
+  private async _encode(message: MessageWithSchema): Promise<Buffer | null> {
     try {
-      return await this.schemaRegistry.encode(message.schemaId, message.value)
+      if (message.value === null) {
+        return null
+      }
+
+      const encodedWithMainSchema = await this.schemaRegistry.encode(message.schemaId, message.value)
+      // If the message has to be validated with a secondarySchema first, we encode it first and throw
+      // an error if the encoding fails.
+
+      const encodedWithPublishingSchema = message.publishingSchemaId
+        ? await this.schemaRegistry.encode(message.publishingSchemaId, message.value)
+        : undefined
+
+
+      return encodedWithPublishingSchema ?? encodedWithMainSchema
     } catch (e) {
       if (e instanceof ConfluentSchemaRegistryValidationError) {
         throw new SchemaSafeError(e, message.schemaId, message.key ?? null)
@@ -133,7 +169,10 @@ export class KafkaClient {
    * Decodes an avro encoded message, the schemaId is derived from the message itself.
    * @param message
    */
-  async decodeMessage(message: Message): Promise<any> {
+  async decodeMessage<T>(message: Message): Promise<T | null> {
+    if (message.value === null) {
+      return null
+    }
     const decoded = await this.schemaRegistry.decode(getAvroMessageBuffer(message))
     return decoded
   }

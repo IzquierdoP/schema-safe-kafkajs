@@ -25,6 +25,7 @@ export interface KafkaClientProps {
 export interface MessageWithSchema {
   key?: Buffer | string | null
   schemaId: number,
+  publishingSchemaId?: number
   value: object | null,
   headers?: IHeaders,
   timestamp?: string
@@ -55,4 +56,11 @@ export class SchemaSafeError extends Error {
     this.messageKey = messageKey
     this.paths = error.paths
   }
+}
+
+export interface RecordFailedToEncode {
+  schemaId: number
+  key: string | null
+  paths?: string[][]
+  error: string
 }
